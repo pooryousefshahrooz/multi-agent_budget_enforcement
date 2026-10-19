@@ -1,0 +1,17 @@
+mechanism,budget,executions,total_llm_calls,total_tokens,within_budget,denied_calls,statuses,sweep
+native recursion_limit,10,1,10,12396,True,0,Counter({'recursion_limit': 1}),False
+request-wide budget,10,1,10,12906,True,1,Counter({'budget_exhausted': 1}),False
+native recursion_limit,10,3,30,37669,False,0,Counter({'recursion_limit': 3}),False
+request-wide budget,10,3,10,9825,True,3,Counter({'budget_exhausted': 3}),False
+native recursion_limit,2,3,6,3886,False,0,Counter({'recursion_limit': 3}),True
+request-wide budget,2,3,2,1020,True,3,Counter({'budget_exhausted': 3}),True
+native recursion_limit,3,3,9,7903,False,0,Counter({'recursion_limit': 3}),True
+request-wide budget,3,3,3,1693,True,3,Counter({'budget_exhausted': 3}),True
+native recursion_limit,5,3,15,17033,False,0,Counter({'recursion_limit': 3}),True
+request-wide budget,5,3,5,3030,True,3,Counter({'budget_exhausted': 3}),True
+native recursion_limit,8,3,24,29156,False,0,Counter({'recursion_limit': 3}),True
+request-wide budget,8,3,8,6671,True,3,Counter({'budget_exhausted': 3}),True
+native recursion_limit,9,3,27,33672,False,0,Counter({'recursion_limit': 3}),True
+request-wide budget,9,3,9,8142,True,3,Counter({'budget_exhausted': 3}),True
+native recursion_limit,10,3,30,37570,False,0,Counter({'recursion_limit': 3}),True
+request-wide budget,10,3,10,9905,True,3,Counter({'budget_exhausted': 3}),True

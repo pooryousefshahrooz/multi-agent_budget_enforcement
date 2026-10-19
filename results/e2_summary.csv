@@ -1,0 +1,13 @@
+mode,recursion_limit,completion_rate,interrupted,mean_steps,mean_calls
+compliant,2,0.0,3,2.0,2.0
+compliant,3,0.0,3,3.0,3.0
+compliant,5,1.0,0,3.0,3.0
+compliant,8,1.0,0,3.0,3.0
+compliant,9,1.0,0,3.0,3.0
+compliant,10,1.0,0,3.0,3.0
+noncompliant,2,0.0,3,2.0,2.0
+noncompliant,3,0.0,3,3.0,3.0
+noncompliant,5,0.0,3,5.0,5.0
+noncompliant,8,0.0,3,8.0,8.0
+noncompliant,9,0.0,3,9.0,9.0
+noncompliant,10,1.0,0,9.0,9.0

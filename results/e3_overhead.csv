@@ -1,0 +1,5 @@
+,compliant (E1),noncompliant x3 (E3),overhead
+steps,3.0,9.0,6.0
+llm_calls,3.0,9.0,6.0
+total_tokens,2615.6666666666665,11129.0,8513.333333333334
+seconds,17.500000000000004,62.20000000000001,44.7
