@@ -60,6 +60,9 @@ class Config:
         self.path = os.path.abspath(path)
         with open(path) as f:
             self.raw = yaml.safe_load(f)
+        if os.getenv("TESTBED_MODEL_URL"):   # e.g. a vLLM server on a cluster node, for any config's real model
+            self.raw["model"] = {"kind": "openai-compatible", "url": os.environ["TESTBED_MODEL_URL"],
+                                 "model": os.environ.get("TESTBED_MODEL_NAME", "model")}
         self.name = self.raw.get("name") or os.path.splitext(os.path.basename(path))[0]
         self.orgs = self.raw["organizations"]
         for org, spec in self.orgs.items():

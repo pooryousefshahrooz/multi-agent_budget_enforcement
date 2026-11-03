@@ -25,3 +25,5 @@ result_*.out
 error_*.err
 vllm_*.log
 *.egg-info/
+# caches and downloads on any machine (model weights, uv, npm)
+_cache/
