@@ -1,0 +1,53 @@
+# TravelPlanner (ReDel task interface) on an orchestrator-worker chain across three organizations.
+#
+#   orgA (CrewAI)    coordinator -> {transport, stays} --------------------> planner   (entry; saves the plan)
+#                    coordinator delegates to orgB.desk (delegate tool) and gets its answer back
+#   orgB (AutoGen)   desk -> {restaurants, attractions} -> reporter
+#                    desk delegates to orgC.front (delegate tool) and gets its answer back
+#   orgC (LangGraph) front -> cities -> reporter
+#
+# Tools: ReDel's TravelPlanner search tools (MCP server `travelplanner`); only the planner saves the plan
+# (`travelplanner-plan`, ReDel's root-only submit_day_plan).
+name: travelplanner
+model: {kind: openai-compatible, url: "http://127.0.0.1:11434/v1", model: "qwen2.5:32b"}
+prices: {usd_per_1m_input: 0.15, usd_per_1m_output: 0.60, usd_per_tool_call: 0.0}
+mcp_servers:
+  travelplanner:      {script: mcp_servers/travelplanner_search.py, env: tasks}
+  travelplanner-plan: {script: mcp_servers/travelplanner_plan.py, env: tasks}
+organizations:
+  orgA:
+    framework: crewai
+    agent_limit: 10
+    agents:
+      coordinator: {role: "You coordinate the trip. List what must be found: transport, accommodation, restaurants, attractions; do not plan it yourself."}
+      transport:   {role: "Find the flights or ground transport for the trip.", mcp: [travelplanner]}
+      stays:       {role: "Find accommodation that fits the trip's constraints.", mcp: [travelplanner]}
+      planner:     {role: "Make the day-by-day plan from the findings you are given and save every day with submit_day_plan.", mcp: [travelplanner-plan]}
+    edges:
+      - "coordinator -> [transport, stays]"
+      - "[transport, stays] -> planner"
+  orgB:
+    framework: autogen
+    agent_limit: 10
+    agents:
+      desk:        {role: "You coordinate. List the restaurants and attractions that must be found; do not find them yourself."}
+      restaurants: {role: "Find restaurants for every day of the trip.", mcp: [travelplanner]}
+      attractions: {role: "Find attractions for every day of the trip.", mcp: [travelplanner]}
+      reporter:    {role: "Combine the findings you are given."}
+    edges:
+      - "desk -> [restaurants, attractions]"
+      - "[restaurants, attractions] -> reporter"
+  orgC:
+    framework: langgraph
+    agent_limit: 10
+    agents:
+      front:    {role: "You coordinate. List which cities the trip must visit; do not find them yourself."}
+      cities:   {role: "Find the cities to visit (city_search) and the distances between them.", mcp: [travelplanner]}
+      reporter: {role: "Combine the findings you are given."}
+    edges:
+      - "front -> cities"
+      - "cities -> reporter"
+links:
+  - "orgA.coordinator -> orgB.desk"
+  - "orgB.desk -> orgC.front"
+entry: orgA.coordinator

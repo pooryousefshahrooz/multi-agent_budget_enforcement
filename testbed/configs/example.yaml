@@ -1,0 +1,78 @@
+# Five organizations, one framework each, 3-4 agents per organization in arbitrary graphs (fan-out, joins),
+# cross-organization links over A2A, and MCP servers used by some agents.
+#
+#   orgA (LangGraph)       planner -> {researcher, critic} -> writer
+#                          critic  ---A2A---> orgB.intake
+#                          writer  ---A2A---> orgC.lead
+#   orgB (ADK)             intake  -> {analyst, checker} -> reporter
+#                          reporter ---A2A--> orgD.desk
+#   orgC (CrewAI)          lead    -> {scout, verifier} -> editor
+#                          scout   ---A2A---> orgE.front
+#   orgD (OpenAI Agents)   desk    -> drafter -> reviewer
+#   orgE (AutoGen)         front   -> {left, right} -> merger
+name: example
+model: {kind: fake, mode: finite}
+prices: {usd_per_1m_input: 0.15, usd_per_1m_output: 0.60, usd_per_tool_call: 0.0005}
+mcp_servers:
+  tcp-reference: {script: mcp_servers/tcp_reference.py}
+organizations:
+  orgA:
+    framework: langgraph
+    agent_limit: 10
+    agents:
+      planner:    {role: "You plan the work."}
+      researcher: {role: "You research the facts.", mcp: [tcp-reference]}
+      critic:     {role: "You find weaknesses."}
+      writer:     {role: "You write the answer."}
+    edges:
+      - "planner -> [researcher, critic]"
+      - "[researcher, critic] -> writer"
+  orgB:
+    framework: adk
+    agent_limit: 10
+    agents:
+      intake:   {role: "You receive outside requests."}
+      analyst:  {role: "You analyse.", mcp: [tcp-reference]}
+      checker:  {role: "You check the analysis."}
+      reporter: {role: "You report back."}
+    edges:
+      - "intake -> [analyst, checker]"
+      - "[analyst, checker] -> reporter"
+  orgC:
+    framework: crewai
+    agent_limit: 10
+    agents:
+      lead:     {role: "You lead the review."}
+      scout:    {role: "You look for sources.", mcp: [tcp-reference]}
+      verifier: {role: "You verify claims."}
+      editor:   {role: "You edit the result."}
+    edges:
+      - "lead -> [scout, verifier]"
+      - "[scout, verifier] -> editor"
+  orgD:
+    framework: openai_agents
+    agent_limit: 10
+    agents:
+      desk:     {role: "You receive outside requests."}
+      drafter:  {role: "You draft.", mcp: [tcp-reference]}
+      reviewer: {role: "You review the draft."}
+    edges:
+      - "desk -> drafter"
+      - "drafter -> reviewer"
+  orgE:
+    framework: autogen
+    agent_limit: 10
+    agents:
+      front:  {role: "You receive outside requests."}
+      left:   {role: "You take one view.", mcp: [tcp-reference]}
+      right:  {role: "You take the other view."}
+      merger: {role: "You merge the views."}
+    edges:
+      - "front -> [left, right]"
+      - "[left, right] -> merger"
+links:
+  - "orgA.critic -> orgB.intake"
+  - "orgA.writer -> orgC.lead"
+  - "orgB.reporter -> orgD.desk"
+  - "orgC.scout -> orgE.front"
+entry: orgA.planner

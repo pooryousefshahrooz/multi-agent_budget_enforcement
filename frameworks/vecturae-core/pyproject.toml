@@ -1,0 +1,13 @@
+[project]
+name = "vecturae-core"
+version = "0.1.0"
+description = "Attenuable capability tokens that carry a request's budget (depth, deadline, cost) across agent frameworks"
+requires-python = ">=3.10"
+dependencies = ["cryptography>=42"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["vecturae"]

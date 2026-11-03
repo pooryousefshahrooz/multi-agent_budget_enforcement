@@ -2,3 +2,26 @@
 .ipynb_checkpoints/
 __pycache__/
 .DS_Store
+.venv/
+delegation_mesh/.trusted_users*.json
+runs/
+experiments/*/.venv/
+experiments/*/envs/
+
+# not public: the paper and its drafts
+*.pdf
+# datasets: downloaded on each machine (GAIA's terms forbid republishing; several files exceed GitHub's limit)
+testbed/tasks/data/*/
+# measurement outputs
+figures/
+results_chain/
+experiments/*/out/
+multi-framework-delegation-chain.ipynb
+# upstream framework checkouts (separate git repositories)
+frameworks/adk-python/
+frameworks/langgraph/
+# Slurm job outputs
+result_*.out
+error_*.err
+vllm_*.log
+*.egg-info/

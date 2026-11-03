@@ -1,0 +1,50 @@
+# The delegation chain of the whiteboard diagram: three organizations, every agent its own A2A server, every arrow an
+# A2A message, results coming back to whoever delegated.
+#
+#   org1 (LangGraph)  a1 -> a2 -> a3            a3 delegates to org2.b1 (delegate tool); a3 reports back to a1
+#   org2 (ADK)        b1 -> {b2, b3} -> b4      b2, b3 use MCP; b4 delegates to org3.c1; b4 reports back to b1
+#   org3 (CrewAI)     c1 -> c2 -> {c3, c4}      c2 uses MCP; c3 and c4 report back to c1
+#
+#   user -> a1 ... a3 --A2A--> b1 ... b4 --A2A--> c1 ... c3, c4 ==> c1 ==> b4 ==> b1 ==> a3 ==> a1 ==> user
+name: diagram
+model: {kind: fake, mode: finite}
+prices: {usd_per_1m_input: 0.15, usd_per_1m_output: 0.60, usd_per_tool_call: 0.0005}
+mcp_servers:
+  tcp-reference: {script: mcp_servers/tcp_reference.py}
+organizations:
+  org1:
+    framework: langgraph
+    agent_limit: 10
+    agents:
+      a1: {role: "You receive the user's request and plan it."}
+      a2: {role: "You refine the plan."}
+      a3: {role: "You get the work done by delegating it to the partner organization."}
+    edges:
+      - "a1 -> a2"
+      - "a2 -> a3"
+  org2:
+    framework: adk
+    agent_limit: 10
+    agents:
+      b1: {role: "You receive requests from partners and split them."}
+      b2: {role: "You research one part.", mcp: [tcp-reference]}
+      b3: {role: "You research the other part.", mcp: [tcp-reference]}
+      b4: {role: "You merge the research and delegate what is left to the partner organization."}
+    edges:
+      - "b1 -> [b2, b3]"
+      - "[b2, b3] -> b4"
+  org3:
+    framework: crewai
+    agent_limit: 10
+    agents:
+      c1: {role: "You receive requests from partners."}
+      c2: {role: "You look up the facts.", mcp: [tcp-reference]}
+      c3: {role: "You write one part of the answer."}
+      c4: {role: "You write the other part of the answer."}
+    edges:
+      - "c1 -> c2"
+      - "c2 -> [c3, c4]"
+links:
+  - "org1.a3 -> org2.b1"
+  - "org2.b4 -> org3.c1"
+entry: org1.a1

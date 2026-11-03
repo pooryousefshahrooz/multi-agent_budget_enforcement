@@ -1,0 +1,40 @@
+# Three organizations with fan-out and join.
+#
+#   orgA: planner ─┬─► research_reno  (ADK)    ─┐
+#                  └─► research_cubic (CrewAI) ─┴─►  orgB: analyst (join) → writer  ─►  orgC: factchecker → reviewer
+#
+# fan-out: the planner hands the plan to both researchers in parallel.
+# join:    the analyst waits for both researchers, merges their work, and runs once.
+model: llama3.2:3b
+upstream: http://localhost:11434/v1
+
+tools:
+  tcp-reference: {port: 8765}
+
+organizations:
+  orgA:
+    gateway: {tools: [tcp-reference]}
+    agents:
+      planner:        {framework: langgraph, role: planner}
+      research_reno:  {framework: adk, role: researcher, tools: [tcp-reference],
+                       subtask: "Explain how TCP Reno grows and cuts its window under packet loss."}
+      research_cubic: {framework: crewai, role: researcher,
+                       subtask: "Explain how TCP CUBIC grows and cuts its window under packet loss."}
+  orgB:
+    agents:
+      analyst:        {framework: openai-agents, role: analyst}
+      writer:         {framework: openai-agents, role: writer}
+  orgC:
+    agents:
+      factchecker:    {framework: langgraph, role: factchecker}
+      reviewer:       {framework: autogen, role: reviewer}
+
+edges:
+  - "planner -> [research_reno, research_cubic]"      # fan-out
+  - "[research_reno, research_cubic] -> analyst"      # join (orgA → orgB)
+  - analyst -> writer
+  - writer -> factchecker                           # orgB → orgC
+  - factchecker -> reviewer
+
+entry: planner
+revise: reviewer -> planner

@@ -1,0 +1,34 @@
+# The other frameworks, and a single-agent organization.
+#   org1 (OpenAI Agents)  a1 -> a2           a2 delegates to org2.b1; a2 reports back to a1
+#   org2 (AutoGen)        b1 -> {b2, b3} -> b4   b4 delegates to org3.solo; b4 reports back to b1
+#   org3 (ADK)            solo               one agent with an MCP server
+name: diagram_b
+model: {kind: fake, mode: finite}
+mcp_servers:
+  tcp-reference: {script: mcp_servers/tcp_reference.py}
+organizations:
+  org1:
+    framework: openai_agents
+    agent_limit: 10
+    agents:
+      a1: {role: "You receive the user's request and plan it."}
+      a2: {role: "You get the work done by delegating it to the partner organization."}
+    edges: ["a1 -> a2"]
+  org2:
+    framework: autogen
+    agent_limit: 10
+    agents:
+      b1: {role: "You receive requests from partners and split them."}
+      b2: {role: "You research one part.", mcp: [tcp-reference]}
+      b3: {role: "You research the other part."}
+      b4: {role: "You merge the research and delegate what is left to the partner organization."}
+    edges: ["b1 -> [b2, b3]", "[b2, b3] -> b4"]
+  org3:
+    framework: adk
+    agent_limit: 10
+    agents:
+      solo: {role: "You answer requests from partners.", mcp: [tcp-reference]}
+links:
+  - "org1.a2 -> org2.b1"
+  - "org2.b4 -> org3.solo"
+entry: org1.a1

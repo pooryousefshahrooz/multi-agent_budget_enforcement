@@ -1,0 +1,41 @@
+# Per-agent limits fail: three organizations, two agents each, every agent with the same per-agent limit set by its
+# operator (5 model calls, mapped to its framework's own setting). Each agent restates the request it forwards, and the
+# receiver starts a fresh run under its own setting, so the request as a whole is bounded by none of them.
+#
+#   org1 (LangGraph)      a1 -> a2       a2 delegates to org2.b1
+#   org2 (ADK)            b1 -> b2       b1 looks up Wikipedia; b2 delegates to org3.c1
+#   org3 (OpenAI Agents)  c1 -> c2       c1 looks up Wikipedia; c2 calculates
+#
+# Task: GAIA validation e1fc63a2-da7a-432f-be78-7c4a95598703 (level 1, no attached file; answer 17).
+name: per_agent_limits
+model: {kind: openai-compatible, url: "http://127.0.0.1:11434/v1", model: "llama3.2:3b"}
+prices: {usd_per_1m_input: 0.15, usd_per_1m_output: 0.60, usd_per_tool_call: 0.0005}   # nominal: local model is free
+mcp_servers:                                             # MCP-Atlas's own servers and pins, stdio behind mcp-proxy
+  wikipedia:  {url: "http://127.0.0.1:9863/mcp", command: [uvx, --from, "wikipedia-mcp==2.0.1", wikipedia-mcp]}
+  calculator: {url: "http://127.0.0.1:9864/mcp", command: [uvx, --with, "mcp<2", "mcp-server-calculator==0.2.0"]}   # the package does not pin mcp; 2.x dropped FastMCP
+organizations:
+  org1:
+    framework: langgraph
+    agent_limit: 5                                       # recursion_limit 9 (5 model calls)
+    agents:
+      a1: {role: "You receive the user's question. Restate it clearly and list what has to be found out to answer it."}
+      a2: {role: "You cannot answer the question yourself. Always call your delegate tool first, with the full question and what is known so far; then give the final answer from its result."}
+    edges: ["a1 -> a2"]
+  org2:
+    framework: adk
+    agent_limit: 5                                       # RunConfig.max_llm_calls = 5
+    agents:
+      b1: {role: "You find Eliud Kipchoge's record marathon pace (time and distance of his record) on Wikipedia with your tools, and report it with the question.", mcp: [wikipedia]}
+      b2: {role: "You cannot finish the question yourself. Always call your delegate tool first, with the full question and the pace you were given; then report its result."}
+    edges: ["b1 -> b2"]
+  org3:
+    framework: openai_agents
+    agent_limit: 5                                       # Runner.run(max_turns=5)
+    agents:
+      c1: {role: "You find the Moon's minimum perigee distance on the Wikipedia page for the Moon with your tools, and report it with the question and the pace you were given.", mcp: [wikipedia]}
+      c2: {role: "You compute the answer with your calculator tool from the pace and the distance you were given, and report it.", mcp: [calculator]}
+    edges: ["c1 -> c2"]
+links:
+  - "org1.a2 -> org2.b1"
+  - "org2.b2 -> org3.c1"
+entry: org1.a1

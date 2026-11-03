@@ -1,0 +1,51 @@
+# FanOutQA (ReDel task interface) on an orchestrator-worker chain across three organizations.
+#
+#   orgA (LangGraph)      root -> {worker1, worker2} ----------------------> answerer   (entry; answer = answerer's)
+#                         root delegates to orgB.lead (delegate tool) and gets its answer back
+#   orgB (ADK)            lead -> {searcher1, searcher2} -> reporter
+#                         lead delegates to orgC.desk (delegate tool) and gets its answer back
+#   orgC (OpenAI Agents)  desk -> searcher -> reporter
+#
+# As in ReDel's "full" setting the root has no tools; workers search Wikipedia (MCP server `fanoutqa`).
+name: fanoutqa
+model: {kind: openai-compatible, url: "http://127.0.0.1:11434/v1", model: "qwen2.5:32b"}
+prices: {usd_per_1m_input: 0.15, usd_per_1m_output: 0.60, usd_per_tool_call: 0.0}
+mcp_servers:
+  fanoutqa: {script: mcp_servers/fanoutqa_search.py, env: tasks, args: [--max-chars, 16000]}
+organizations:
+  orgA:
+    framework: langgraph
+    agent_limit: 10
+    agents:
+      root:     {role: "You coordinate. Split the question into the sub-questions that must be answered; do not answer them yourself."}
+      worker1:  {role: "Answer the first half of the sub-questions by searching Wikipedia with the search tool (use exact article titles).", mcp: [fanoutqa]}
+      worker2:  {role: "Answer the second half of the sub-questions by searching Wikipedia with the search tool (use exact article titles).", mcp: [fanoutqa]}
+      answerer: {role: "Combine the findings you are given into the final answer to the question. Answer concisely."}
+    edges:
+      - "root -> [worker1, worker2]"
+      - "[worker1, worker2] -> answerer"
+  orgB:
+    framework: adk
+    agent_limit: 10
+    agents:
+      lead:      {role: "You coordinate. Split the question into the sub-questions that must be answered; do not answer them yourself."}
+      searcher1: {role: "Answer the first half of the sub-questions by searching Wikipedia with the search tool (use exact article titles).", mcp: [fanoutqa]}
+      searcher2: {role: "Answer the second half of the sub-questions by searching Wikipedia with the search tool (use exact article titles).", mcp: [fanoutqa]}
+      reporter:  {role: "Combine the findings you are given into an answer to the question."}
+    edges:
+      - "lead -> [searcher1, searcher2]"
+      - "[searcher1, searcher2] -> reporter"
+  orgC:
+    framework: openai_agents
+    agent_limit: 10
+    agents:
+      desk:     {role: "You coordinate. List the sub-questions that must be answered; do not answer them yourself."}
+      searcher: {role: "Answer the sub-questions by searching Wikipedia with the search tool (use exact article titles).", mcp: [fanoutqa]}
+      reporter: {role: "Combine the findings you are given into an answer to the question."}
+    edges:
+      - "desk -> searcher"
+      - "searcher -> reporter"
+links:
+  - "orgA.root -> orgB.lead"
+  - "orgB.lead -> orgC.desk"
+entry: orgA.root

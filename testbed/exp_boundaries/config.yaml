@@ -1,0 +1,35 @@
+# Experiment 1 (propagation across boundaries), first example: one LangGraph organization, four agents, each on its
+# own LangGraph Agent Server (native A2A), an MCP-Atlas task with MCP-Atlas's own MCP servers, three limit levels.
+#
+#   user -> A -> {B, C} -> D -> verified: final answer | not verified: back to A (next round, at most max_rounds)
+name: exp_boundaries
+model: {kind: openai-compatible, url: "http://127.0.0.1:11434/v1", model: "qwen2.5:32b"}
+prices: {usd_per_1m_input: 0.15, usd_per_1m_output: 0.60, usd_per_tool_call: 0.0005}   # nominal: local model is free
+a2a_upstreams_file: runs/exp_boundaries/upstreams.json    # written by launch.py: each agent's Agent Server endpoint
+max_rounds: 3                                             # D's loop guard (application code)
+
+task:                                                     # MCP-Atlas (ScaleAI/mcp-atlas), train split
+  dataset: ScaleAI/mcp-atlas
+  id: 68a398aa2f58036e8d45ee28
+
+mcp_servers:                                              # MCP-Atlas's own servers and pins, stdio behind mcp-proxy
+  open-library: {url: "http://127.0.0.1:9862/mcp", command: [npx, -y, "@geobio/mcp-open-library@0.1.6"]}
+  wikipedia:    {url: "http://127.0.0.1:9863/mcp", command: [uvx, --from, "wikipedia-mcp==2.0.1", wikipedia-mcp]}
+
+organizations:
+  orgA:
+    framework: langgraph
+    agents:
+      A: {role: "You are the planner. Split the task into two parts: one for a researcher with Open Library tools (books and authors) and one for a researcher with Wikipedia tools. Reply with the two parts only; do not answer the task yourself."}
+      B: {role: "You are a researcher with Open Library tools. Do the part of the plan about books and authors, using your tools, and reply with what you found.", mcp: [open-library]}
+      C: {role: "You are a researcher with Wikipedia tools. Do the part of the plan that needs an encyclopedia, using your tools, and reply with what you found.", mcp: [wikipedia]}
+      D: {role: "You are the verifier. Check whether the findings fully and correctly answer the task. If they do, reply 'VERIFIED:' and the final answer. If not, reply 'NOT VERIFIED:' and what is missing or wrong."}
+    edges:                                                # for the record; the agents delegate over A2A themselves
+      - "A -> [B, C]"
+      - "[B, C] -> D"
+entry: orgA.A
+
+limits:                                                   # set by the user on the first A2A message
+  high:   {max_depth: 10, deadline_s: 900, max_model_calls: 200, max_tool_calls: 100, max_tokens: 500000, max_cost_usd: 1.00}
+  middle: {max_depth: 4,  deadline_s: 180, max_model_calls: 30,  max_tool_calls: 15,  max_tokens: 60000,  max_cost_usd: 0.10}
+  low:    {max_depth: 2,  deadline_s: 30,  max_model_calls: 5,   max_tool_calls: 2,   max_tokens: 5000,   max_cost_usd: 0.01}

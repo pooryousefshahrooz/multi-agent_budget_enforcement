@@ -1,0 +1,12 @@
+# Check: does LangGraph's own A2A server (Agent Server) pass the user's limit into the run, when the A2A message
+# carries it in BOTH the message metadata and the request metadata (run.py's origin message)? The observer inspects
+# the run config and the whole graph state.
+name: check_langgraph_receive_a2a
+model: {kind: fake, mode: finite}
+request_limit: {max_depth: 3, deadline_s: 600, max_cost_usd: 0.01}
+organizations:
+  org_lg:
+    framework: langgraph
+    agents:
+      b: {role: "SCRIPT: answer"}
+entry: org_lg.b

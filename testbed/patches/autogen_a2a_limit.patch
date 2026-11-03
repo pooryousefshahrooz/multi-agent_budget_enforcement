@@ -1,0 +1,201 @@
+diff -ruN a/autogen_agentchat/a2a.py b/autogen_agentchat/a2a.py
+--- a/autogen_agentchat/a2a.py	1970-01-01 01:00:00
++++ b/autogen_agentchat/a2a.py	2026-10-27 14:39:45
+@@ -0,0 +1,197 @@
++"""Serve an AssistantAgent over A2A (Agent2Agent protocol 1.0, via ``a2a-sdk``), honouring the delegated-work limit
++the caller attaches to the request.
++
++A caller that delegates work may put a ``limit`` on the A2A message metadata (or the request metadata)::
++
++    {"limit": {"max_depth": 2, "deadline": 1793099255.6, "max_cost_usd": 0.01}}
++
++``max_depth`` is the number of delegation hops left (the caller has already taken its own hop off), ``deadline`` a
++Unix time, ``max_cost_usd`` a budget. The run of a request carrying a limit stays within it:
++
++* no hop left (``max_depth < 1``), a deadline already passed, or a budget smaller than one model call: the task is
++  rejected and no run starts;
++* the deadline bounds the run's wall-clock time (its CancellationToken is cancelled when it passes);
++* the budget bounds the run's tool iterations: ``max_tool_iterations = budget // usd_per_call`` (``usd_per_call`` is
++  the server's price of one model call; without it the budget is not converted).
++
++The agent's own ``max_tool_iterations`` stays an upper bound. Usage::
++
++    from autogen_agentchat.a2a import to_a2a
++    app = to_a2a(agent, url="http://127.0.0.1:9000", usd_per_call=0.001)   # a Starlette app
++
++``agent`` may be an ``AssistantAgent`` or a factory: an async context manager function yielding the agent for one
++request (for agents whose workbenches are opened per request). ``on_run_end`` receives an ``A2ARunRecord`` for every
++request.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import contextlib
++import time
++from collections.abc import Awaitable, Callable
++from dataclasses import dataclass, field
++from typing import Any, Union
++
++from autogen_core import CancellationToken
++
++from .agents import AssistantAgent
++from .messages import BaseChatMessage, ToolCallRequestEvent
++
++AgentSource = Union[AssistantAgent, Callable[[], contextlib.AbstractAsyncContextManager[AssistantAgent]]]
++
++
++class DelegationLimitExhausted(Exception):
++    """The request's limit leaves no room for a run (no hop left, deadline passed, or budget below one call)."""
++
++
++@dataclass
++class A2ARunRecord:
++    """What one A2A request ran with and how it ended."""
++
++    limit: dict[str, Any] | None
++    max_tool_iterations: int | None
++    timeout_s: float | None
++    outcome: str  # "completed" | "rejected" | "max_tool_iterations" | "deadline" | "error"
++    error: str | None = None
++    extra: dict[str, Any] = field(default_factory=dict)
++
++
++def received_limit(message_metadata: dict[str, Any] | None,
++                   request_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
++    """The ``limit`` attached to the message, else to the request."""
++    for meta in (message_metadata, request_metadata):
++        if meta and isinstance(meta.get("limit"), dict):
++            return dict(meta["limit"])
++    return None
++
++
++def run_bounds(limit: dict[str, Any] | None, max_tool_iterations: int,
++               usd_per_call: float | None) -> tuple[int, float | None]:
++    """(max_tool_iterations, timeout in seconds) for a run under ``limit``; raises DelegationLimitExhausted when no
++    run fits."""
++    if not limit:
++        return max_tool_iterations, None
++    if limit.get("max_depth") is not None and limit["max_depth"] < 1:
++        raise DelegationLimitExhausted("no delegation depth left")
++    timeout = None
++    if limit.get("deadline") is not None:
++        timeout = float(limit["deadline"]) - time.time()
++        if timeout <= 0:
++            raise DelegationLimitExhausted("deadline passed")
++    if limit.get("max_cost_usd") is not None and usd_per_call:
++        calls = int(float(limit["max_cost_usd"]) // usd_per_call)
++        if calls < 1:
++            raise DelegationLimitExhausted("cost budget used up")
++        max_tool_iterations = min(calls, max_tool_iterations)
++    return max_tool_iterations, timeout
++
++
++@contextlib.asynccontextmanager
++async def _bounded(agent: AgentSource, lock: asyncio.Lock, iterations: int | None):
++    """The agent for one request, with its max_tool_iterations set for this request only."""
++    if isinstance(agent, AssistantAgent):
++        async with lock:   # a shared agent: one request at a time, its own setting restored afterwards
++            own = agent._max_tool_iterations
++            agent._max_tool_iterations = own if iterations is None else iterations
++            try:
++                yield agent
++            finally:
++                agent._max_tool_iterations = own
++    else:
++        async with agent() as a:
++            if iterations is not None:
++                a._max_tool_iterations = iterations
++            yield a
++
++
++def make_executor(agent: AgentSource, *, usd_per_call: float | None = None,
++                  on_run_end: Callable[[A2ARunRecord], Awaitable[None] | None] | None = None) -> Any:
++    """An ``a2a.server.agent_execution.AgentExecutor`` running ``agent`` per A2A request."""
++    from a2a.helpers import get_message_text, new_task_from_user_message, new_text_message, new_text_part
++    from a2a.server.agent_execution import AgentExecutor
++    from a2a.server.tasks import TaskUpdater
++    from a2a.types import TaskState
++    from google.protobuf import json_format
++
++    lock = asyncio.Lock()
++
++    async def _report(record: A2ARunRecord) -> None:
++        if on_run_end is not None:
++            res = on_run_end(record)
++            if asyncio.iscoroutine(res):
++                await res
++
++    class AutoGenA2AExecutor(AgentExecutor):
++        async def execute(self, context: Any, event_queue: Any) -> None:
++            task = context.current_task or new_task_from_user_message(context.message)
++            await event_queue.enqueue_event(task)
++            up = TaskUpdater(event_queue=event_queue, task_id=task.id, context_id=task.context_id)
++            meta = context.message.metadata
++            limit = received_limit(json_format.MessageToDict(meta) if meta.ListFields() else None, context.metadata)
++            unbounded = 1 << 30
++            try:   # before the agent is opened: a request with no room for a run is rejected
++                calls, timeout = run_bounds(limit, unbounded, usd_per_call)
++            except DelegationLimitExhausted as e:
++                await up.reject(new_text_message(f"Delegation limit exhausted: {e}"))
++                await _report(A2ARunRecord(limit, None, None, "rejected", str(e)))
++                return
++            iterations: int | None = None
++            try:
++                async with _bounded(agent, lock, None) as a:
++                    iterations = min(calls, a._max_tool_iterations)
++                    a._max_tool_iterations = iterations
++                    await up.update_status(state=TaskState.TASK_STATE_WORKING)
++                    token = CancellationToken()
++                    timer = asyncio.get_running_loop().call_later(timeout, token.cancel) if timeout else None
++                    try:
++                        result = await a.run(task=get_message_text(context.message), cancellation_token=token)
++                    finally:
++                        if timer is not None:
++                            timer.cancel()
++            except asyncio.CancelledError:
++                error = f"DeadlineExceeded: run stopped at the request's deadline ({timeout:.0f}s)"
++                await up.failed(new_text_message(error))
++                await _report(A2ARunRecord(limit, iterations, timeout, "deadline", error))
++                return
++            except Exception as e:  # noqa: BLE001
++                error = f"{type(e).__name__}: {e}"
++                await up.failed(new_text_message(error[:500]))
++                await _report(A2ARunRecord(limit, iterations, timeout, "error", error))
++                return
++            rounds = sum(1 for m in result.messages if isinstance(m, ToolCallRequestEvent))
++            texts = [m.to_text() for m in result.messages if isinstance(m, BaseChatMessage) and m.source != "user"]
++            await up.add_artifact(parts=[new_text_part(text=texts[-1] if texts else "")])
++            await up.complete()
++            # the agent stops calling tools when its iterations run out (no error): the last round still made calls
++            stopped = iterations is not None and rounds >= iterations
++            await _report(A2ARunRecord(limit, iterations, timeout, "max_tool_iterations" if stopped else "completed",
++                                       extra={"tool_rounds": rounds}))
++
++        async def cancel(self, context: Any, event_queue: Any) -> None:
++            raise NotImplementedError
++
++    return AutoGenA2AExecutor()
++
++
++def to_a2a(agent: AgentSource, *, url: str, name: str | None = None, description: str | None = None,
++           usd_per_call: float | None = None,
++           on_run_end: Callable[[A2ARunRecord], Awaitable[None] | None] | None = None) -> Any:
++    """A Starlette app serving ``agent`` over A2A 1.0 (JSON-RPC) at ``url``, with its Agent Card."""
++    from a2a.server.request_handlers import DefaultRequestHandler
++    from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
++    from a2a.server.tasks import InMemoryTaskStore
++    from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
++    from starlette.applications import Starlette
++
++    label = name or (agent.name if isinstance(agent, AssistantAgent) else "agent")
++    card = AgentCard(name=label, description=description or label, version="1.0",
++                     default_input_modes=["text/plain"], default_output_modes=["text/plain"],
++                     capabilities=AgentCapabilities(streaming=False),
++                     supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=url,
++                                                          protocol_version="1.0")],
++                     skills=[AgentSkill(id="run", name=label, description=description or label, tags=["agent"])])
++    handler = DefaultRequestHandler(agent_executor=make_executor(agent, usd_per_call=usd_per_call,
++                                                                 on_run_end=on_run_end),
++                                    task_store=InMemoryTaskStore(), agent_card=card)
++    return Starlette(routes=create_agent_card_routes(card) + create_jsonrpc_routes(handler, "/"))

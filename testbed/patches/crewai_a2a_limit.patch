@@ -1,0 +1,84 @@
+diff -ru a/crewai/a2a/config.py b/crewai/a2a/config.py
+--- a/crewai/a2a/config.py	2026-10-27 11:53:47
++++ b/crewai/a2a/config.py	2026-10-27 11:54:01
+@@ -685,6 +685,11 @@
+         default=None,
+         description="Authentication scheme for A2A endpoints. Defaults to SimpleTokenAuth using AUTH_TOKEN env var.",
+     )
++    usd_per_call: float | None = Field(
++        default=None,
++        description="Price of one model call, used to turn a received cost budget (limit.max_cost_usd) into max_iter. "
++        "Without it a received cost budget is not converted.",
++    )
+ 
+     @model_validator(mode="after")
+     def _migrate_deprecated_fields(self) -> Self:
+diff -ru a/crewai/a2a/utils/task.py b/crewai/a2a/utils/task.py
+--- a/crewai/a2a/utils/task.py	2026-10-27 11:53:47
++++ b/crewai/a2a/utils/task.py	2026-10-27 11:54:09
+@@ -10,6 +10,7 @@
+ import json
+ import logging
+ import os
++import time
+ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
+ from urllib.parse import urlparse
+ 
+@@ -54,6 +55,7 @@
+ 
+ 
+ if TYPE_CHECKING:
++    from crewai.a2a.config import A2AServerConfig
+     from crewai.a2a.extensions.server import ExtensionContext, ServerExtensionRegistry
+     from crewai.agent import Agent
+ 
+@@ -287,6 +289,38 @@
+     return f"{user_message}\n\nStructured Data:\n{structured_json}"
+ 
+ 
++def _received_limit(context: RequestContext) -> dict[str, Any] | None:
++    """The delegated-work limit the caller attached to this request: ``limit`` in the message metadata, else in the
++    request metadata. Fields: max_depth (hops left), deadline (Unix time), max_cost_usd."""
++    for meta in (context.message.metadata if context.message else None, context.metadata):
++        if meta and isinstance(meta.get("limit"), dict):
++            return cast(dict[str, Any], meta["limit"])
++    return None
++
++
++def _limited_agent(
++    agent: Agent, limit: dict[str, Any], server_config: A2AServerConfig | None
++) -> Agent:
++    """A copy of the agent for this request only, whose run stays within the received limit: no hop left rejects
++    the task; the deadline becomes max_execution_time; the cost budget becomes max_iter at the server's
++    usd_per_call. The agent's own settings stay as an upper bound."""
++    if limit.get("max_depth") is not None and limit["max_depth"] < 1:
++        raise ServerError(InvalidParamsError(message="Delegation limit exhausted: no delegation depth left"))
++    update: dict[str, Any] = {}
++    if limit.get("deadline") is not None:
++        left = int(float(limit["deadline"]) - time.time())
++        if left < 1:
++            raise ServerError(InvalidParamsError(message="Delegation limit exhausted: deadline passed"))
++        update["max_execution_time"] = min(left, agent.max_execution_time or left)
++    price = server_config.usd_per_call if server_config else None
++    if limit.get("max_cost_usd") is not None and price:
++        calls = int(float(limit["max_cost_usd"]) // price)
++        if calls < 1:
++            raise ServerError(InvalidParamsError(message="Delegation limit exhausted: cost budget used up"))
++        update["max_iter"] = min(calls, agent.max_iter)
++    return agent.model_copy(update=update) if update else agent
++
++
+ async def execute(
+     agent: Agent,
+     context: RequestContext,
+@@ -325,6 +359,10 @@
+ 
+     if extension_registry and extension_context:
+         await extension_registry.invoke_on_request(extension_context)
++
++    limit = _received_limit(context)
++    if limit is not None:
++        agent = _limited_agent(agent, limit, server_config)
+ 
+     user_message = context.get_user_input()
+ 

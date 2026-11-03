@@ -1,0 +1,35 @@
+# Three organizations, two agents each, as one chain across the organizations.
+# Each organization has its own gateway (its own credentials and cost counter) and its own list of users.
+#
+#   orgA: planner → researcher  ─►  orgB: analyst → writer  ─►  orgC: factchecker → reviewer
+#                                                               (REVISE: reviewer → planner)
+model: llama3.2:3b
+upstream: http://localhost:11434/v1
+
+tools:                          # paid MCP tools, metered by the gateway of every org that lists them
+  tcp-reference: {port: 8765}
+
+organizations:
+  orgA:
+    gateway: {tools: [tcp-reference]}
+    agents:
+      planner:     {framework: langgraph, role: planner}
+      researcher:  {framework: adk, role: researcher, tools: [tcp-reference]}
+  orgB:
+    agents:
+      analyst:     {framework: crewai, role: analyst}
+      writer:      {framework: openai-agents, role: writer}
+  orgC:
+    agents:
+      factchecker: {framework: langgraph, role: factchecker}
+      reviewer:    {framework: autogen, role: reviewer}
+
+edges:
+  - planner -> researcher
+  - researcher -> analyst       # orgA → orgB
+  - analyst -> writer
+  - writer -> factchecker       # orgB → orgC
+  - factchecker -> reviewer
+
+entry: planner
+revise: reviewer -> planner     # orgC → orgA

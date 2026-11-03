@@ -1,0 +1,22 @@
+# Experiment 1, MCP tool call and MCP sampling: langgraph. One agent holds the user's limit in its run and calls tools on
+# the probe-tools MCP server through its framework's own MCP client: noop (is the limit in the request?), slow (40 s
+# under the user's 20 s deadline: whose deadline cuts it?), summarize (the server asks the client for a model call).
+name: exp1_mcp_langgraph
+model: {kind: fake, mode: finite}
+request_limit: {max_depth: 3, deadline_s: 20, max_cost_usd: 0.01}
+entry_via: native
+mcp_servers:
+  probe-tools: {script: mcp_servers/probe_tools.py, env: tasks}
+organizations:
+  org_langgraph:
+    framework: langgraph
+    delegation: native
+    agents:
+      a:
+        role: |
+          SCRIPT: noop {"step": 1}
+          SCRIPT: slow {"seconds": 40}
+          SCRIPT: summarize {"text": "hello"}
+        mcp: [probe-tools]
+        sampling: true
+entry: org_langgraph.a

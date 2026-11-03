@@ -1,0 +1,17 @@
+# Smallest check: one LangGraph organization, four agents, fan-out and join, one MCP tool.
+name: one_autogen
+model: {kind: fake}
+mcp_servers:
+  tcp-reference: {script: mcp_servers/tcp_reference.py}
+organizations:
+  orgA:
+    framework: autogen
+    agents:
+      planner:    {role: "You plan the work."}
+      researcher: {role: "You research the facts.", mcp: [tcp-reference]}
+      critic:     {role: "You find weaknesses."}
+      summarizer: {role: "You summarize everything."}
+    edges:
+      - "planner -> [researcher, critic]"
+      - "[researcher, critic] -> summarizer"
+entry: orgA.planner
